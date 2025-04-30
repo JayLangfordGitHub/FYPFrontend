@@ -1,136 +1,113 @@
-# Provider config
 provider "aws" {
   region = "us-east-1"
 }
 
-# Fetch Kubernetes config from the EKS cluster
-data "aws_eks_cluster" "eks" {
-  depends_on = [module.eks] # Ensure the EKS cluster is created first
-  name       = module.eks.cluster_name
+# Fetch the default VPC
+data "aws_vpc" "default" {
+  default = true
 }
 
-data "aws_eks_cluster_auth" "eks" {
-  depends_on = [module.eks] # Ensure the EKS cluster is created first
-  name       = module.eks.cluster_name
-}
-
-provider "kubernetes" {
-  host                   = data.aws_eks_cluster.eks.endpoint
-  cluster_ca_certificate = base64decode(data.aws_eks_cluster.eks.certificate_authority[0].data)
-  token                  = data.aws_eks_cluster_auth.eks.token
-}
-
-provider "helm" {
-  kubernetes {
-    host                   = data.aws_eks_cluster.eks.endpoint
-    cluster_ca_certificate = base64decode(data.aws_eks_cluster.eks.certificate_authority[0].data)
-    token                  = data.aws_eks_cluster_auth.eks.token
+# Fetch one public subnet in that default VPC
+data "aws_subnet" "default" {
+  filter {
+    name   = "vpc-id"
+    values = [data.aws_vpc.default.id]
   }
+  availability_zone = "us-east-1a"
 }
 
-# VPC
-module "vpc" {
-  source               = "terraform-aws-modules/vpc/aws"
-  version              = "5.17.0"
-  name                 = "high-availability-vpc"
-  cidr                 = "10.0.0.0/16"
-  azs                  = ["us-east-1a", "us-east-1b", "us-east-1c"]
-  private_subnets      = ["10.0.1.0/24", "10.0.2.0/24", "10.0.3.0/24"]
-  public_subnets       = ["10.0.101.0/24", "10.0.102.0/24", "10.0.103.0/24"]
-  enable_nat_gateway   = true
-  single_nat_gateway   = true
-}
-
-# Application Load Balancer
-module "alb" {
-  source  = "terraform-aws-modules/alb/aws"
-  version = "9.0.0"
-
-  name               = "monitoring-alb"
-  load_balancer_type = "application"
-  vpc_id             = module.vpc.vpc_id
-  subnets            = module.vpc.public_subnets
-  security_groups    = [aws_security_group.alb_sg.id]
-  enable_deletion_protection = false
-  tags = {
-    Environment = "dev"
-  }
-}
-
-# EKS cluster module
-module "eks" {
-  source          = "terraform-aws-modules/eks/aws"
-  version         = "20.31.6"
-  cluster_name    = "monitoring-cluster"
-  cluster_version = "1.26"
-  vpc_id          = module.vpc.vpc_id
-  subnet_ids      = module.vpc.private_subnets
-}
-
-# Autoscaling module
-module "autoscaling" {
-  source = "./autoscaling"
-
-  vpc_id          = module.vpc.vpc_id
-  private_subnets = module.vpc.private_subnets
-  public_subnets  = module.vpc.public_subnets
-  enable_autoscaling = true
-
-  scaling_config = {
-    min_size         = 1
-    max_size         = 5
-    desired_capacity = 2
-    scale_out_cpu    = 75
-    scale_in_cpu     = 25
-  }
-}
-
-resource "helm_release" "grafana" {
-  depends_on       = [module.eks] # Ensure the EKS cluster exists before deploying Helm resources
-  name             = "grafana"
-  chart            = "grafana"
-  repository       = "https://grafana.github.io/helm-charts"
-  namespace        = "monitoring"
-  create_namespace = true
-}
-
-resource "helm_release" "prometheus_operator" {
-  depends_on       = [module.eks] # Ensure the EKS cluster exists before deploying Helm resources
-  name             = "prometheus-operator"
-  chart            = "kube-prometheus-stack"
-  repository       = "https://prometheus-community.github.io/helm-charts"
-  namespace        = "monitoring"
-  create_namespace = true
-}
-
-resource "aws_security_group" "alb_sg" {
-  name        = "alb-security-group"
-  description = "Security group for the Application Load Balancer"
-  vpc_id      = module.vpc.vpc_id
+# Security Group allowing SSH and HTTP
+resource "aws_security_group" "dealhub_sg" {
+  name        = "dealhub-sg"
+  description = "Allow HTTP and SSH"
+  vpc_id      = data.aws_vpc.default.id
 
   ingress {
+    description = "SSH access"
+    from_port   = 22
+    to_port     = 22
+    protocol    = "tcp"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  ingress {
+    description = "HTTP access"
     from_port   = 80
     to_port     = 80
     protocol    = "tcp"
     cidr_blocks = ["0.0.0.0/0"]
   }
 
-  ingress {
-    from_port   = 443
-    to_port     = 443
-    protocol    = "tcp"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
   egress {
+    description = "Allow all outbound"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"
     cidr_blocks = ["0.0.0.0/0"]
   }
+}
+
+# Fetch the latest Amazon Linux 2 AMI
+data "aws_ami" "amazon_linux" {
+  most_recent = true
+
+  filter {
+    name   = "name"
+    values = ["amzn2-ami-hvm-*-x86_64-gp2"]
+  }
+
+  filter {
+    name   = "virtualization-type"
+    values = ["hvm"]
+  }
+
+  owners = ["137112412989"] # Amazon
+}
+
+# EC2 instance running Node.js app
+resource "aws_instance" "dealhub_instance" {
+  ami                         = data.aws_ami.amazon_linux.id
+  instance_type               = "t3.micro"
+  vpc_security_group_ids      = [aws_security_group.dealhub_sg.id]
+  associate_public_ip_address = true
+  subnet_id                   = data.aws_subnet.default.id
+  key_name                    = "dealhubkey"
+
+  user_data = base64encode(<<-EOF
+    #!/bin/bash
+    curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+    yum install -y nodejs
+
+    cat <<EOL > /home/ec2-user/app.js
+    const http = require('http');
+    const hostname = '0.0.0.0';
+    const port = 80;
+    const server = http.createServer((req, res) => {
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/plain');
+      res.end('Welcome to DealHub');
+    });
+    server.listen(port, hostname, () => {
+      console.log('Server running at http://' + hostname + ':' + port + '/');
+    });
+    EOL
+
+    cd /home/ec2-user
+    nohup node app.js > output.log 2>&1 &
+  EOF
+  )
 
   tags = {
-    Name        = "alb-security-group"
-    Environment = "dev"
+    Name = "dealhub-instance"
   }
+}
+
+# Output the instance public IP
+output "instance_public_ip" {
+  value = aws_instance.dealhub_instance.public_ip
+}
+
+# (Optional bonus) Output clickable URL
+output "dealhub_url" {
+  value = "http://${aws_instance.dealhub_instance.public_ip}"
 }
