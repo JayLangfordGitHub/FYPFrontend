@@ -18,13 +18,42 @@ const PriceHistoryChart = ({ currentPrice, startDate }) => {
     datasets: [],
   });
 
+  const [predictedDeal, setPredictedDeal] = useState(null);
+
+  const getPredictionFromTrend = (priceHistory) => {
+    const prices = priceHistory.map((entry) => parseFloat(entry.price));
+    const dates = priceHistory.map((entry) => new Date(entry.date));
+
+    if (prices.length < 2 || dates.length < 2) return null;
+
+    // Average price difference
+    const diffs = prices.slice(1).map((p, i) => p - prices[i]);
+    const avgDelta = diffs.reduce((a, b) => a + b, 0) / diffs.length;
+
+    // Average time gap in days
+    const dateDiffs = dates.slice(1).map((d, i) =>
+      Math.floor((d - dates[i]) / (1000 * 60 * 60 * 24))
+    );
+    const avgDayGap = Math.round(dateDiffs.reduce((a, b) => a + b, 0) / dateDiffs.length);
+
+    // Predict price and date
+    const predictedPrice = Math.max(1, prices[prices.length - 1] + avgDelta).toFixed(2);
+    const predictedDate = new Date(dates[dates.length - 1]);
+    predictedDate.setDate(predictedDate.getDate() + avgDayGap);
+
+    return {
+      price: predictedPrice,
+      date: predictedDate.toISOString().split('T')[0],
+    };
+  };
+
   useEffect(() => {
     if (!currentPrice || !startDate) return;
 
     const generateFakePriceHistory = () => {
       const now = new Date(startDate);
       const monthsToGoBack = 3;
-      const entries = Math.floor(Math.random() * 3) + 1;
+      const entries = Math.floor(Math.random() * 3) + 2; // 2–4 entries
       const history = [];
 
       const dayStep = Math.floor((monthsToGoBack * 30) / (entries + 1));
@@ -42,8 +71,9 @@ const PriceHistoryChart = ({ currentPrice, startDate }) => {
         });
       }
 
+      const todayStr = new Date(startDate).toISOString().split('T')[0];
       history.push({
-        date: new Date(startDate).toISOString().split('T')[0],
+        date: todayStr,
         price: Number(currentPrice).toFixed(2),
       });
 
@@ -67,6 +97,9 @@ const PriceHistoryChart = ({ currentPrice, startDate }) => {
         },
       ],
     });
+
+    const prediction = getPredictionFromTrend(priceData);
+    setPredictedDeal(prediction);
   }, [currentPrice, startDate]);
 
   return (
@@ -103,6 +136,17 @@ const PriceHistoryChart = ({ currentPrice, startDate }) => {
           }}
         />
       </div>
+
+      {predictedDeal && (
+        <div className="mt-6 p-4 border-t border-gray-200">
+          <h3 className="text-lg font-semibold text-gray-800 mb-1">Predicted Next Deal</h3>
+          <p className="text-gray-600">
+            Based on recent trends, the next deal may drop to{' '}
+            <span className="font-bold text-green-600">€{predictedDeal.price}</span> around{' '}
+            <span className="font-medium">{predictedDeal.date}</span>.
+          </p>
+        </div>
+      )}
     </div>
   );
 };
