@@ -27,7 +27,7 @@ const DealsPage = () => {
     const fetchDeals = async () => {
       try {
         setLoading(true);
-        const response = await fetch('http://100.24.119.92:3000/api/deals');
+        const response = await fetch('/api/deals');
         if (!response.ok) throw new Error('Failed to fetch deals');
 
         const allDeals = await response.json();

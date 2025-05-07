@@ -14,7 +14,7 @@ const DealDetailPage = () => {
     const fetchDealDetails = async () => {
       try {
         setLoading(true);
-        const response = await fetch(`http://100.24.119.92:3000/api/deal/${dealId}`);
+        const response = await fetch(`/api/deal/${dealId}`);
 
         if (!response.ok) {
           throw new Error('Deal not found');

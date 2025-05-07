@@ -8,7 +8,7 @@ const Hero = () => {
   useEffect(() => {
     const fetchTopDeal = async () => {
       try {
-        const res = await fetch('http://100.24.119.92:3000/api/deals');
+        const res = await fetch('/api/deals');
         const data = await res.json();
         const best = data.sort((a, b) => b.savings_percentage - a.savings_percentage)[0];
         setTopDeal(best);

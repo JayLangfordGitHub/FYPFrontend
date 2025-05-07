@@ -21,7 +21,7 @@ const CategorySection = () => {
   // Fetch deals for the selected category
   useEffect(() => {
     setLoading(true);
-    fetch('http://100.24.119.92:3000/api/deals')
+    fetch('/api/deals')
       .then(response => response.json())
       .then(data => {
         const filtered = data.slice(0, 4);

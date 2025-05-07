@@ -11,7 +11,7 @@ const SectionedDealsRow = ({ title, filter, linkTo }) => {
   useEffect(() => {
     const fetchDeals = async () => {
       try {
-        const res = await fetch('http://100.24.119.92:3000/api/deals');
+        const res = await fetch('/api/deals');
         const data = await res.json();
 
         let filtered = data;
